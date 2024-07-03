@@ -56,6 +56,7 @@
 %%--------------------------------------------------------------------
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+
 -spec register_handler(Handler::atom(), Spec::match_spec()) -> ok | {error, _}.
 register_handler(Handler, Spec = {_, _, _}) when is_atom(Handler)->
     gen_server:call(?SERVER, {register, Handler, Spec}).
@@ -79,7 +80,9 @@ init([]) ->
     {ok, Socket} = gen_udp:open(67, [binary,
                                      inet,
                                      {broadcast, true},
-                                     {reuseaddr, true}]),
+                                     {reuseaddr, true},
+                                     {active, true}
+                                    ]),
     ets:new(?TBL, [bag, {read_concurrency, true}, named_table]),
 
     {ok, #state{socket = Socket}}.
@@ -102,6 +105,10 @@ init([]) ->
 handle_call({register, H, Spec}, _From, State = #state{handlers = Hs}) ->
     Reply = ok,
     {reply, Reply, State#state{ handlers = [{H, Spec} | Hs]}};
+
+handle_call(socket, _From, State = #state{socket = Socket}) ->
+    {reply, Socket, State};
+
 handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
@@ -129,8 +136,9 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({udp, Socket, _IP, 68, Packet},
+handle_info({udp, Socket, IP, 68, Packet},
             State = #state{socket=Socket, handlers = Handler}) ->
+    lager:info("dhcp udp rec from ~p~n", [IP]),
     case dhcp_package:decode(Packet) of
         {ok, D} ->
             ID = {D#dhcp_package.chaddr, D#dhcp_package.xid},
@@ -141,13 +149,16 @@ handle_info({udp, Socket, _IP, 68, Packet},
                 {[{ID, Pid}], _} ->
                     maybe_start_and_send(D, ID, Pid, Handler, Socket);
                 _ ->
+                    lager:info("discarded ID=~p MT=~p package=~p",[ID,MT,D]),
                     ok
             end;
         E ->
             lager:warning("Decoding failed: ~p (~p)", [E, Packet])
     end,
     {noreply, State};
-handle_info(_Info, State) ->
+
+handle_info(Info, State) ->
+    lager:info("dhcp input ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
@@ -228,15 +239,16 @@ maybe_start_and_send(Msg, ID, Pid, Handler, Socket) ->
         undefined ->
             do_start_child(Msg, ID, Handler, Socket);
         _ ->
-            gen_fsm:send_event(Pid, Msg)
+            gen_statem:cast(Pid, Msg)
     end.
 
 do_start_child(Msg, ID, Handler, Socket) ->
     case match(Msg, Handler) of
         {ok, H} ->
             {ok, Pid1} = supervisor:start_child(dhcp_fsm_sup, [Socket, H]),
-            gen_fsm:send_event(Pid1, Msg),
+            gen_statem:cast(Pid1, Msg),
             ets:insert(?TBL, {ID, Pid1});
         _ ->
+            lager:warning("handler not matching msg"),
             ok
     end.

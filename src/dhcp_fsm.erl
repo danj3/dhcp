@@ -8,28 +8,29 @@
 %%%-------------------------------------------------------------------
 -module(dhcp_fsm).
 
--behaviour(gen_fsm).
+-behaviour(gen_statem).
 
 -include("dhcp.hrl").
 
 %% API
 -export([start_link/2]).
 
-%% gen_fsm callbacks
--export([init/1,
-         handle_event/3,
-         handle_sync_event/4,
-         handle_info/3,
+%% callbacks
+-export([
+         init/1,
          terminate/3,
          code_change/4]).
 
--export([
-         initial/2,
-         offered/2,
-         bound/2
+-export([callback_mode/0
         ]).
 
--ignore_xref([initial/2, offered/2, bound/2, start_link/2]).
+-export([
+         initial/3,
+         offered/3,
+         bound/3
+        ]).
+
+-ignore_xref([initial/3, offered/3, bound/3, start_link/2]).
 
 -define(SERVER, ?MODULE).
 
@@ -61,7 +62,7 @@
 %% @end
 %%--------------------------------------------------------------------
 start_link(Socket, Handler) ->
-    gen_fsm:start_link(?MODULE, [Socket, Handler], []).
+    gen_statem:start_link(?MODULE, [Socket, Handler], []).
 
 %%%===================================================================
 %%% gen_fsm callbacks
@@ -94,6 +95,9 @@ init([Socket, Handler]) ->
                          request_timeout = Tr,
                          last = current_time()}, ?S(10)}.
 
+callback_mode() ->
+    state_functions.
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -109,11 +113,12 @@ init([Socket, Handler]) ->
 %%                   {stop, Reason, NewState}
 %% @end
 %%--------------------------------------------------------------------
-initial(timeout, State) ->
+initial(timeout, _Content, State) ->
     lager:warning("[DHCP] timeout in initial."),
     {stop, normal, State};
 
-initial(Pkg = #dhcp_package{xid = XId, message_type = discover},
+initial(cast,
+        Pkg = #dhcp_package{xid = XId, message_type = discover},
         State = #state{initial_timeout = Ti,
                        offer_timeout = To}) ->
     case delegate(discover, Pkg,
@@ -129,7 +134,8 @@ initial(Pkg = #dhcp_package{xid = XId, message_type = discover},
             {next_state, initial, State#state{xid = XId}, ?S(Ti)}
     end;
 
-initial(Pkg = #dhcp_package{message_type = request},
+initial(cast,
+        Pkg = #dhcp_package{message_type = request},
         State = #state{initial_timeout = Ti}) ->
     case delegate(request, Pkg,
                   [{ip_address_lease_time, 3000}], State) of
@@ -144,12 +150,14 @@ initial(Pkg = #dhcp_package{message_type = request},
             {next_state, initial, State, ?S(Ti)}
     end.
 
-offered(timeout, State) ->
+
+offered(timeout, _Content, State) ->
     lager:warning("[DHCP] offer timed out."),
     {stop, normal, State};
 
-offered(Pkg = #dhcp_package{xid = _XId, message_type = request},
-        State = #state{xid = _XId, server_identifier = Si, yiaddr = YiAddr,
+offered(cast,
+        Pkg = #dhcp_package{xid = _XId1, message_type = request},
+        State = #state{xid = _XId2, server_identifier = Si, yiaddr = YiAddr,
                        offer_timeout = To}) ->
     case {dhcp_package:get_option(dhcp_server_identifier, Pkg),
           dhcp_package:get_option(requested_ip_address, Pkg)} of
@@ -178,28 +186,33 @@ offered(Pkg = #dhcp_package{xid = _XId, message_type = request},
             {stop, normal, State}
     end;
 
-offered(#dhcp_package{xid = _XId, message_type = decline},
-        State = #state{xid = _XId}) ->
+offered(cast,
+        #dhcp_package{xid = _XId1, message_type = decline},
+        State = #state{xid = _XId2}) ->
     {stop, normal, State};
 
-offered(#dhcp_package{}, State = #state{offer_timeout = To}) ->
+offered(cast,
+        #dhcp_package{}, State = #state{offer_timeout = To}) ->
     {next_state, offered, State, ?S(To)}.
 
 
-bound(timeout, State) ->
+bound(timeout, _Content, State) ->
     lager:warning("[DHCP] timeout in bound."),
     {stop, normal, State};
 
-bound(Pkg = #dhcp_package{xid = _XId, message_type = release},
-      State = #state{xid = _XId, handler = M, handler_state = S}) ->
+bound(cast,
+      Pkg = #dhcp_package{xid = _XId1, message_type = release},
+      State = #state{xid = _XId2, handler = M, handler_state = S}) ->
     case dhcp_handler:release(M, Pkg, S) of
         {ok, S1} ->
             {stop, normal, State#state{handler_state = S1}};
         _ ->
             {stop, normal, State}
     end;
-bound(Pkg = #dhcp_package{xid = _XId, message_type = request},
-      State = #state{xid = _XId, server_identifier = Si, yiaddr = YiAddr}) ->
+
+bound(cast,
+      Pkg = #dhcp_package{xid = _XId1, message_type = request},
+      State = #state{xid = _XId2, server_identifier = Si, yiaddr = YiAddr}) ->
     case {dhcp_package:get_option(dhcp_server_identifier, Pkg),
           dhcp_package:get_option(requested_ip_address, Pkg)} of
         {Si, YiAddr} ->
@@ -219,77 +232,6 @@ bound(Pkg = #dhcp_package{xid = _XId, message_type = request},
         _ ->
             {stop, normal, State}
     end.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% There should be one instance of this function for each possible
-%% state name. Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_event/[2, 3], the instance of this function with
-%% the same name as the current state name StateName is called to
-%% handle the event.
-%%
-%% @spec state_name(Event, From, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:send_all_state_event/2, this function is called to handle
-%% the event.
-%%
-%% @spec handle_event(Event, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
-handle_event(_Event, StateName, State) ->
-    {next_state, StateName, State}.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Whenever a gen_fsm receives an event sent using
-%% gen_fsm:sync_send_all_state_event/[2, 3], this function is called
-%% to handle the event.
-%%
-%% @spec handle_sync_event(Event, From, StateName, State) ->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {reply, Reply, NextStateName, NextState} |
-%%                   {reply, Reply, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState} |
-%%                   {stop, Reason, Reply, NewState}
-%% @end
-%%--------------------------------------------------------------------
-handle_sync_event(_Event, _From, StateName, State) ->
-    Reply = ok,
-    {reply, Reply, StateName, State}.
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_fsm when it receives any
-%% message other than a synchronous or asynchronous event
-%% (or a system message).
-%%
-%% @spec handle_info(Info, StateName, State)->
-%%                   {next_state, NextStateName, NextState} |
-%%                   {next_state, NextStateName, NextState, Timeout} |
-%%                   {stop, Reason, NewState}
-%% @end
-%%--------------------------------------------------------------------
-handle_info(_Info, StateName, State) ->
-    {next_state, StateName, State}.
 
 %%--------------------------------------------------------------------
 %% @private
