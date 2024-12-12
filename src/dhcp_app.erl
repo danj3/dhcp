@@ -10,7 +10,10 @@
 %% ===================================================================
 
 start(_StartType, _StartArgs) ->
-    dhcp_sup:start_link().
+    {ok, Handlers} = application:get_env(dhcp, handlers),
+    Pid = dhcp_sup:start_link(),
+    dhcp_server:register_handlers(Handlers),
+    Pid.
 
 stop(_State) ->
     ok.

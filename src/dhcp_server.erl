@@ -14,13 +14,11 @@
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--export([match/2, match_pkg/2,
-         match_mac/2, match_fields/2, match_opts/2]).
 -endif.
 
 %% API
--export([start_link/0, register_handler/2]).
--ignore_xref([start_link/0, register_handler/2]).
+-export([start_link/0, register_handler/2, register_handlers/1]).
+-ignore_xref([start_link/0, register_handler/2, register_handlers/1]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -30,17 +28,6 @@
 -define(TBL, dhcp_sessions).
 
 -record(state, {socket, handlers = []}).
--type mac_match_byte() :: byte() | '_'.
--type mac_match() :: '_' | {mac_match_byte(), mac_match_byte(),
-                            mac_match_byte(), mac_match_byte(),
-                            mac_match_byte(), mac_match_byte()}.
--type field_match() :: {dhcp:package_fields(),
-                        dhcp:op() | dhcp:htype() | byte() | dhcp:int32() |
-                        dhcp:ip() | dhcp:mac() | binary() |
-                        dhcp:message_type() | dhcp:flags()}.
--type option_match() :: dhcp:option().
--type match_spec() :: {mac_match(), [field_match()], [option_match()]}.
-
 
 
 %%%===================================================================
@@ -57,9 +44,16 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
--spec register_handler(Handler::atom(), Spec::match_spec()) -> ok | {error, _}.
-register_handler(Handler, Spec = {_, _, _}) when is_atom(Handler)->
-    gen_server:call(?SERVER, {register, Handler, Spec}).
+-spec register_handler(Handler::atom(), Config::any()) -> ok | {error, _}.
+register_handler(Handler, Config) when is_atom(Handler)->
+    gen_server:call(?SERVER, {register, Handler, Config}).
+
+-spec register_handlers([{Handler::atom(), Config::any()} | _]) -> ok | {error, _}.
+register_handlers([{Handler, Config} | Rest]) when is_atom(Handler)->
+    ok = gen_server:call(?SERVER, {register, Handler, Config}),
+    register_handlers(Rest);
+register_handlers([]) ->
+    ok.
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -103,8 +97,12 @@ init([]) ->
 %%--------------------------------------------------------------------
 
 handle_call({register, H, Spec}, _From, State = #state{handlers = Hs}) ->
-    Reply = ok,
-    {reply, Reply, State#state{ handlers = [{H, Spec} | Hs]}};
+    case H:registered(Spec) of
+        {ok, Config} ->
+          {reply, ok, State#state{ handlers = [{H, Config} | Hs]}};
+        {error, Why} ->
+            {reply, {error, Why}, State}
+    end;
 
 handle_call(socket, _From, State = #state{socket = Socket}) ->
     {reply, Socket, State};
@@ -190,50 +188,6 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
--spec match(Pkg::dhcp:package(), [{Handler::atom(), Spec::match_spec()}]) ->
-                   {ok, Handler::atom()} | undefined.
-match(Pkg, [{Handler, Spec} | R]) ->
-    case match_pkg(Pkg, Spec) of
-        true ->
-            {ok, Handler};
-        false ->
-            match(Pkg, R)
-    end;
-match(_Pkg, []) ->
-    undefined.
-
--spec match_pkg(Pkg::dhcp:package(), Spec::match_spec()) -> boolean().
-match_pkg(Pkg, {Mac, Fields, Opts}) ->
-    match_mac(dhcp_package:get_chaddr(Pkg), Mac) andalso
-        match_fields(Pkg, Fields) andalso
-        match_opts(Pkg, Opts).
-
--spec match_mac(dhcp:mac(), mac_match()) -> boolean().
-match_mac({A, B, C, D, E, F}, {A, B, C, D, E, F}) -> true;
-match_mac({A, B, C, D, E, _}, {A, B, C, D, E, '_'}) -> true;
-match_mac({A, B, C, D, _, _}, {A, B, C, D, '_', '_'}) -> true;
-match_mac({A, B, C, _, _, _}, {A, B, C, '_', '_', '_'}) -> true;
-match_mac({A, B, _, _, _, _}, {A, B, '_', '_', '_', '_'}) -> true;
-match_mac({A, _, _, _, _, _}, {A, '_', '_', '_', '_', '_'}) -> true;
-match_mac({_, _, _, _, _, _}, {'_', '_', '_', '_', '_', '_'}) -> true;
-match_mac({_, _, _, _, _, _}, '_') -> true;
-match_mac(_, _) -> false.
-
--spec match_fields(P::dhcp:package(), [field_match()]) ->
-                          boolean().
-match_fields(P, [{F, V} | Fs]) ->
-    (dhcp_package:get_field(F, P) =:= V) andalso
-        match_fields(P, Fs);
-match_fields(_P, []) ->
-    true.
-
--spec match_opts(P::dhcp:package(), [dhcp:option()]) -> boolean().
-match_opts(P, [{O, V} | Fs]) ->
-    (dhcp_package:get_option(O, P) =:= V) andalso
-        match_fields(P, Fs);
-match_opts(_, []) ->
-    true.
-
 maybe_start_and_send(Msg, ID, Pid, Handler, Socket) ->
     case  process_info(Pid) of
         undefined ->
@@ -242,11 +196,11 @@ maybe_start_and_send(Msg, ID, Pid, Handler, Socket) ->
             gen_statem:cast(Pid, Msg)
     end.
 
-do_start_child(Msg, ID, Handler, Socket) ->
-    case match(Msg, Handler) of
+do_start_child(Pkg, ID, Handler, Socket) ->
+    case dhcp_match:match(Pkg, Handler) of
         {ok, H} ->
             {ok, Pid1} = supervisor:start_child(dhcp_fsm_sup, [Socket, H]),
-            gen_statem:cast(Pid1, Msg),
+            gen_statem:cast(Pid1, Pkg),
             ets:insert(?TBL, {ID, Pid1});
         _ ->
             lager:warning("handler not matching msg"),

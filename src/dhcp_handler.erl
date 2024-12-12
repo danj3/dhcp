@@ -6,8 +6,19 @@
 -type state() :: any().
 -type server_id() :: dhcp:ip().
 
--callback init() ->
-    {ok, state(), server_id()}.
+-callback match(Msg::dhcp:package(), Config::any()) -> true | false.
+
+%% When handler is registered, this is called from within the
+%% dhcp_server process, allowing for shared set up that will
+%% be passed to each handler process spawned in response to
+%% a dhcp request
+-callback registered(Config::any()) -> InitConfig::any().
+
+% HandlerModule allows the handler to return itself or
+% another module, but specifically allows the
+% handler init to separate the Config
+-callback init(InitConfig::any()) ->
+    {ok, HandlerModule::atom(), state(), server_id()}.
 
 -callback discover(ReplyPkg, RequestPkg, state()) ->
     {ok, state()} |
@@ -41,8 +52,10 @@
     {error, any()} when RequestPkg::dhcp:package().
 
 
+init({Handler, Config}) ->
+    Handler:init(Config);
 init(Handler) ->
-    Handler:init().
+    Handler:init([]).
 
 request(Handler, ReplyPkg, RequestPkg, State) ->
     Handler:request(ReplyPkg, RequestPkg, State).

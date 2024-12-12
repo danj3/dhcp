@@ -82,11 +82,11 @@ start_link(Socket, Handler) ->
 %% @end
 %%--------------------------------------------------------------------
 init([Socket, Handler]) ->
-    {ok, HandlerState, ServerIdentifier} = dhcp_handler:init(Handler),
+    {ok, Handler2, HandlerState, ServerIdentifier} = dhcp_handler:init(Handler),
     {ok, Ti} = application:get_env(initial_timeout),
     {ok, To} = application:get_env(offer_timeout),
     {ok, Tr} = application:get_env(request_timeout),
-    {ok, initial, #state{handler = Handler,
+    {ok, initial, #state{handler = Handler2,
                          handler_state = HandlerState,
                          socket = Socket,
                          server_identifier = ServerIdentifier,

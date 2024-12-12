@@ -12,9 +12,9 @@
   {env, [
          {initial_timeout, 10},
          {offer_timeout, 10},
-         {request_timeout, 30}
+         {request_timeout, 30},
+         {handlers, [{dhcp_basic_handler, #{}}]}
         ]},
-  {env,[]},
   {maintainers,["Heinz N. Gies"]},
   {licenses,["CDDL"]},
   {links,[{"Github","https://github.com/project-fifo/dhcp"}]}
