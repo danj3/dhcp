@@ -834,13 +834,17 @@ encode_type(string, S) when is_binary(S) ->
 encode_type(message_type, Type) ->
     <<1:8, (encode_message_type(Type)):8>>.
 
-decode_options(<<99:8, 130:8, 83:8, 99:8, Opts/binary>>) ->
+-define(MAGIC_COOKIE, 16#63:8, 16#82:8, 16#53:8, 16#63:8).
+-define(END_OPT, 16#ff:8).
+-define(PAD, 16#00:8).
+
+decode_options(<<?MAGIC_COOKIE, Opts/binary>>) ->
     lists:sort(decode_options(Opts, [])).
 
-decode_options(<<0:8, R/binary>>, Opts) ->
+decode_options(<<?PAD, R/binary>>, Opts) ->
     decode_options(R, Opts);
 
-decode_options(<<255:8, _/binary>>, Opts) ->
+decode_options(<<?END_OPT, _/binary>>, Opts) ->
     Opts;
 
 decode_options(<<>>, Opts) ->
@@ -970,28 +974,44 @@ str_encode_test() ->
     ok.
 
 decode_test() ->
-    P = <<1,
-          1,
-          6,
-          0,
-          227, 48, 230, 107,
-          0, 1,
-          0, 0,
-          0, 0, 0, 0,
-          0, 0, 0, 0,
-          0, 0, 0, 0,
-          0, 0, 0, 0,
-          16, 154, 221, 112, 125, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    P = <<1, % Message type: 1=Boot request
+          1, % Hardware type: 1=Ethernet
+          6, % Address length
+          0, % Hops
+          227, 48, 230, 107, % Transaction ID
+          0, 1, % Seconds elapsed
+          128, 0, % Flags <<128,0>> broadcast
+          0, 0, 0, 0, % current client IP address
+          0, 0, 0, 0, % your (client) IP address, lease offer server assignment
+          0, 0, 0, 0, % next server IP
+          0, 0, 0, 0, % Relay agent IP
+          16, 154, 221, 112, 125, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, % Client MAC address 6+padding
 
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, % server name 64B
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+
+          0, 0, 0, 0, 0, 0, 0, 0, % boot file name 128B
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0,
 
           99, 130, 83, 99,
           53, 1, 1,
