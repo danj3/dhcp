@@ -1,6 +1,11 @@
 -module(dhcp_basic_handler).
 -behaviour(dhcp_handler).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-compile(export_all).
+-endif.
+
 -export([
   match/2, registered/1, init/1,
   discover/3, request/3, release/2]).
@@ -30,7 +35,7 @@
   xid::dhcp:int32()
   }).
 
-match(_Pkg, _Config) -> true.
+match(_Pkg, _Config) -> false.
 
 registered(Config) ->
   RangeStart = dhcp:tpl_to_ip(maps:get(range_start, Config, ?IP_START)),
@@ -72,3 +77,14 @@ request(ReplyPkg, #{chaddr := Chaddr} = _RequestPkg,
 
 release(_RequestPkg, State) ->
   {ok, State}.
+
+-ifdef(TEST).
+
+registered_test() ->
+    {ok, #config{
+       range_start=RangeStart
+      }} = registered(#{}),
+    RangeStartIp=dhcp:tpl_to_ip(?IP_START),
+    ?assertEqual(RangeStart, RangeStartIp).
+
+-endif.
