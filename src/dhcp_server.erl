@@ -29,6 +29,7 @@
 
 -record(state, {socket, handlers = []}).
 
+-type session_id() :: {mac(), non_neg_integer()}.
 
 %%%===================================================================
 %%% API
@@ -96,10 +97,10 @@ init([]) ->
 %% @end
 %%--------------------------------------------------------------------
 
-handle_call({register, H, Spec}, _From, State = #state{handlers = Hs}) ->
-    case H:registered(Spec) of
-        {ok, Config} ->
-          {reply, ok, State#state{ handlers = [{H, Config} | Hs]}};
+handle_call({register, H, Config}, _From, State = #state{handlers = Hs}) ->
+    case H:registered(Config) of
+        {ok, IConfig} ->
+          {reply, ok, State#state{ handlers = [{H, IConfig} | Hs]}};
         {error, Why} ->
             {reply, {error, Why}, State}
     end;
@@ -134,21 +135,15 @@ handle_cast(_Msg, State) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info({udp, Socket, IP, 68, Packet},
-            State = #state{socket=Socket, handlers = Handler}) ->
+handle_info({udp, _Socket, IP, 68, Packet}, State) ->
     lager:info("dhcp udp rec from ~p~n", [IP]),
     case dhcp_package:decode(Packet) of
         {ok, D} ->
-            ID = {D#dhcp_package.chaddr, D#dhcp_package.xid},
-            MT = D#dhcp_package.message_type,
-            case {ets:lookup(?TBL, ID), MT} of
-                {[], discover} ->
-                    do_start_child(D, ID, Handler, Socket);
-                {[{ID, Pid}], _} ->
-                    maybe_start_and_send(D, ID, Pid, Handler, Socket);
-                _ ->
-                    lager:info("discarded ID=~p MT=~p package=~p",[ID,MT,D]),
-                    ok
+            case lookup_session(D#dhcp_package.chaddr, D#dhcp_package.xid) of
+                {Id, nil} ->
+                    do_start_child(D, Id, State);
+                {_Id, Pid} ->
+                    gen_statem:cast(Pid, D)
             end;
         E ->
             lager:warning("Decoding failed: ~p (~p)", [E, Packet])
@@ -188,21 +183,31 @@ code_change(_OldVsn, State, _Extra) ->
 %%% Internal functions
 %%%===================================================================
 
-maybe_start_and_send(Msg, ID, Pid, Handler, Socket) ->
-    case  process_info(Pid) of
-        undefined ->
-            do_start_child(Msg, ID, Handler, Socket);
-        _ ->
-            gen_statem:cast(Pid, Msg)
+-spec lookup_session(mac(), non_neg_integer()) -> {session_id(), pid() | nil}.
+lookup_session(Chaddr, Xid) ->
+    Id = {Chaddr, Xid},
+    case {ets:lookup(?TBL, Id), discover} of
+        {[], discover} ->
+            {Id, nil};
+        {[{_Id, Pid}], _} ->
+            case process_info(Pid) of
+                undefined ->
+                    {Id, nil};
+                _ ->
+                    {Id, Pid}
+            end
     end.
 
-do_start_child(Pkg, ID, Handler, Socket) ->
-    case dhcp_match:match(Pkg, Handler) of
+do_start_child(Pkg, ID, _State = #state{socket=Socket, handlers=Handlers}) ->
+    case dhcp_match:match(Pkg, Handlers) of
         {ok, H} ->
             {ok, Pid1} = supervisor:start_child(dhcp_fsm_sup, [Socket, H]),
             gen_statem:cast(Pid1, Pkg),
             ets:insert(?TBL, {ID, Pid1});
-        _ ->
-            lager:warning("handler not matching msg"),
+        undefined ->
+            lager:info("discarded ID=~p MT=~p package=~p",
+                       [Pkg#dhcp_package.xid,
+                        Pkg#dhcp_package.message_type,
+                        Pkg]),
             ok
     end.

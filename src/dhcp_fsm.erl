@@ -40,13 +40,16 @@
                 last = {0, 0, 0},
                 handler,
                 handler_state,
-                socket,
-                server_identifier,
+                socket::inet:socket(),
+                server_identifier::integer(),
                 yiaddr,
                 initial_timeout = 10,
                 offer_timeout = 10,
                 request_timeout = 30
                }).
+-type handler() :: {atom(), map()}.
+-type socket() :: inet:socket().
+-type init_args() :: [socket() | [handler()]].
 
 %%%===================================================================
 %%% API
@@ -61,6 +64,7 @@
 %% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
 %% @end
 %%--------------------------------------------------------------------
+-spec start_link(socket(), handler()) -> {ok, pid()} | ignore | {error, any()}.
 start_link(Socket, Handler) ->
     gen_statem:start_link(?MODULE, [Socket, Handler], []).
 
@@ -81,15 +85,19 @@ start_link(Socket, Handler) ->
 %%                     {stop, StopReason}
 %% @end
 %%--------------------------------------------------------------------
-init([Socket, Handler]) ->
-    {ok, Handler2, HandlerState, ServerIdentifier} = dhcp_handler:init(Handler),
+
+-spec init(init_args()) -> {ok, initial, #state{}, integer()}.
+init([Socket, {HandlerModule, _} = Handler]) ->
+    {ok, {IpAddress, _Port}} = inet:sockname(Socket),
+    Ip32 = dhcp:tpl_to_ip(IpAddress),
+    {ok, HandlerState} = dhcp_handler:init(Handler),
     {ok, Ti} = application:get_env(initial_timeout),
     {ok, To} = application:get_env(offer_timeout),
     {ok, Tr} = application:get_env(request_timeout),
-    {ok, initial, #state{handler = Handler2,
+    {ok, initial, #state{handler = HandlerModule,
                          handler_state = HandlerState,
                          socket = Socket,
-                         server_identifier = ServerIdentifier,
+                         server_identifier = Ip32,
                          initial_timeout = Ti,
                          offer_timeout = To,
                          request_timeout = Tr,
@@ -318,7 +326,7 @@ reply_addr(#dhcp_package{flags = [broadcast]}) ->
     {255, 255, 255, 255};
 reply_addr(#dhcp_package{message_type = offer}) ->
     {255, 255, 255, 255};
-reply_addr(#dhcp_package{message_type = nack}) ->
+reply_addr(#dhcp_package{message_type = nck}) ->
     {255, 255, 255, 255};
 reply_addr(#dhcp_package{ciaddr = 0}) ->
     {255, 255, 255, 255};

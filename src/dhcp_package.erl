@@ -162,7 +162,7 @@ decode(P) ->
 %% by the message type set via set_message_type.
 %% @end
 %%--------------------------------------------------------------------
--spec encode(Message::dhcp_package()) -> binary().
+-spec encode(Message::package()) -> {ok, binary()}.
 encode(#dhcp_package{
           op = Op, htype = HType, hlen = HLen, hops = Hops,
           xid = XId,
@@ -938,7 +938,7 @@ valid_reply(P = #dhcp_package{message_type = ack}) ->
                   parameter_request_list,
                   client_identifier,
                   dhcp_maximum_msg_size]);
-valid_reply(P = #dhcp_package{message_type = nack, options = Options}) ->
+valid_reply(P = #dhcp_package{message_type = nck, options = Options}) ->
     O1 = ordsets:from_list([K || {K, _} <- Options]),
     O2 = ordsets:from_list([dhcp_error_message,
                             client_identifier,

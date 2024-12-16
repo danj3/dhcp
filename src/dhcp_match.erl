@@ -30,7 +30,7 @@
 -type match_spec() :: {mac_match(), [field_match()], [option_match()]}.
 
 
--spec match_pkg(Pkg::dhcp:package(), Spec::match_spec()) -> boolean().
+-spec match_pkg(Pkg::package(), Spec::match_spec()) -> boolean().
 match_pkg(Pkg, {Mac, Fields, Opts}) ->
     match_mac(dhcp_package:get_chaddr(Pkg), Mac) andalso
         match_fields(Pkg, Fields) andalso
@@ -47,7 +47,7 @@ match_mac({_, _, _, _, _, _}, {'_', '_', '_', '_', '_', '_'}) -> true;
 match_mac({_, _, _, _, _, _}, '_') -> true;
 match_mac(_, _) -> false.
 
--spec match_fields(P::dhcp:package(), [field_match()]) ->
+-spec match_fields(P::package(), [field_match()]) ->
                           boolean().
 match_fields(P, [{F, V} | Fs]) ->
     (dhcp_package:get_field(F, P) =:= V) andalso
@@ -55,7 +55,7 @@ match_fields(P, [{F, V} | Fs]) ->
 match_fields(_P, []) ->
     true.
 
--spec match_opts(P::dhcp:package(), [dhcp:option()]) -> boolean().
+-spec match_opts(P::package(), [dhcp:option()]) -> boolean().
 match_opts(P, [{O, V} | Fs]) ->
     (dhcp_package:get_option(O, P) =:= V) andalso
         match_fields(P, Fs);
@@ -63,8 +63,8 @@ match_opts(_, []) ->
     true.
 
 
--spec match(Pkg::dhcp:package(), [{Handler::atom(), Config::any()}]) ->
-                   {ok, {Handler::atom()}, Config::any()} | undefined.
+-spec match(Pkg::package(), [{Handler::atom(), Config::any()}]) ->
+                   {ok, {Handler::atom(), Config::any()}} | undefined.
 match(Pkg, [{Handler, Config} | R]) ->
     case Handler:match(Pkg, Config) of
         true ->

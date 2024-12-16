@@ -2,7 +2,6 @@
 
 -include("dhcp.hrl").
 
--opaque package() :: #dhcp_package{}.
 -opaque option() :: dhcp_option().
 -opaque flags() :: dhcp_flags().
 -opaque op() :: dhcp_op().

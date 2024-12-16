@@ -1,6 +1,6 @@
 -type message_type() ::
         discover | offer | request | decline |
-        ack | nck | release | inform | force_renew.
+        ack | nck | release | inform | force_renew | undefined.
 
 
 -type dhcp_op() :: request | reply.
@@ -194,3 +194,4 @@
          message_type = ack :: message_type()
         }).
 
+-type package() :: #dhcp_package{}.

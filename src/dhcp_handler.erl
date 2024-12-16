@@ -1,10 +1,11 @@
 -module(dhcp_handler).
+-include("dhcp.hrl").
 
 -export([init/1, discover/4, request/4, release/3]).
 
 -ignore_xref([behaviour_info/1]).
 -type state() :: any().
--type server_id() :: dhcp:ip().
+-type config() :: any().
 
 -callback match(Msg::dhcp:package(), Config::any()) -> true | false.
 
@@ -17,8 +18,8 @@
 % HandlerModule allows the handler to return itself or
 % another module, but specifically allows the
 % handler init to separate the Config
--callback init(InitConfig::any()) ->
-    {ok, HandlerModule::atom(), state(), server_id()}.
+-callback init(InitConfig::config()) ->
+    {ok, state()}.
 
 -callback discover(ReplyPkg, RequestPkg, state()) ->
     {ok, state()} |
@@ -53,9 +54,7 @@
 
 
 init({Handler, Config}) ->
-    Handler:init(Config);
-init(Handler) ->
-    Handler:init([]).
+    Handler:init(Config).
 
 request(Handler, ReplyPkg, RequestPkg, State) ->
     Handler:request(ReplyPkg, RequestPkg, State).

@@ -1,6 +1,8 @@
 -module(dhcp_basic_handler).
 -behaviour(dhcp_handler).
 
+-include("dhcp.hrl").
+
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
@@ -21,70 +23,81 @@
 -define(LEASE_TABLE, dhcp_basic_leases).
 
 -record(config, {
-  range_start::dhcp:ip(),
-  range_end::dhcp:ip(),
-  netmask::dhcp:ip_tpl(),
-  leases::ets:table(),
-  server_ip::dhcp:ip_tpl()
-  }).
+                 lease_start::ip_tpl(),
+                 range_start::ip(),
+                 range_end::ip(),
+                 netmask::ip_tpl(),
+                 leases::ets:table()
+                }).
 
 -record(state, {
-  table::ets:table(),
-  chaddr::dhcp:mac(),
-  ciaddr::dhcp:ip_tpl(),
-  xid::dhcp:int32()
-  }).
+                chaddr::dhcp:mac() | undefined,
+                ciaddr::ip_tpl() | undefined,
+                xid::dhcp:int32() | undefined,
+                config::#config{}
+               }).
 
 match(_Pkg, _Config) -> false.
 
+-spec registered(map()) -> {ok, #config{}}.
 registered(Config) ->
-  RangeStart = dhcp:tpl_to_ip(maps:get(range_start, Config, ?IP_START)),
-  RangeEnd = dhcp:tpl_to_ip(maps:get(range_end, Config, ?IP_END)),
-  Netmask = maps:get(netmask, Config, ?NETMASK),
-  Table = ets:new(?LEASE_TABLE, [set, {read_concurrency, true}, named_table]),
-  ets:insert(Table, {next_lease, RangeStart-1}),
-  {ok, #config{
-    range_start=RangeStart,
-    range_end = RangeEnd,
-    netmask = Netmask,
-    leases = Table
-  }}.
+    RangeStartTpl=maps:get(range_start, Config, ?IP_START),
+    RangeStart = dhcp:tpl_to_ip(RangeStartTpl),
+    RangeEnd = dhcp:tpl_to_ip(maps:get(range_end, Config, ?IP_END)),
+    Netmask = maps:get(netmask, Config, ?NETMASK),
+    Table = ets:new(?LEASE_TABLE, [set, {read_concurrency, true}, named_table]),
+    ets:insert(Table, {next_lease, RangeStart-1}),
+    {ok, #config{
+            lease_start=RangeStartTpl,
+            range_start=RangeStart,
+            range_end = RangeEnd,
+            netmask = Netmask,
+            leases = Table
+           }}.
 
-init(#{server_ip := ServerIp} = Config) ->
-  {ok, ?MODULE, #{config => Config}, ServerIp }.
+-spec init(#config{}) -> {ok, #state{}}.
+init(Config) ->
+    {ok, #state{config=Config}}.
 
 discover(ReplyPkg,
-    #{chaddr := Chaddr} = _RequestPkg,
-    #{table := Table, netmask := Netmask} = State) ->
+         #dhcp_package{chaddr = Chaddr} = _RequestPkg,
+         #state{config = #config{leases= Table, netmask = Netmask}} = State) ->
 
-  Ip = ets:update_counter(Table, next_lease, 1),
-  %% Add upper boundary check
-  IpTpl = dhcp:ip_to_tpl(Ip),
-  case ets:inert_new(Table, {Chaddr, #lease{ciaddr=Ip, chaddr=Chaddr}}) of
-    true ->
-      {ok, {offer, IpTpl, Netmask, ReplyPkg}, 
-        State#state{ciaddr = Ip, chaddr = Chaddr}};
-    false ->
-      {error, lease_exhaustion}
-  end.
+    Ip = ets:update_counter(Table, next_lease, 1),
+    %% Add upper boundary check
+    IpTpl = dhcp:ip_to_tpl(Ip),
+    case ets:insert_new(Table, {Chaddr, #lease{ciaddr=Ip, chaddr=Chaddr}}) of
+        true ->
+            {ok, {offer, IpTpl, Netmask, ReplyPkg}, 
+             State#state{ciaddr = IpTpl, chaddr = Chaddr}};
+        false ->
+            {error, lease_exhaustion}
+    end.
 
-request(ReplyPkg, #{chaddr := Chaddr} = _RequestPkg,
-  #{table := Table, netmask := Netmask} = State) ->
+request(ReplyPkg,
+        #dhcp_package{chaddr = Chaddr} = _RequestPkg,
+        #state{config = #config{leases= Table, netmask = Netmask}} = State) ->
 
-  [{_,#lease{ciaddr=Ip}}] = ets:lookup(Table, Chaddr),
-  IpTpl = dhcp:ip_to_tpl(Ip),
-  {ok, {offer, IpTpl, Netmask, ReplyPkg}, State}.
+    [{_,#lease{ciaddr=Ip}}] = ets:lookup(Table, Chaddr),
+    %IpTpl = dhcp:ip_to_tpl(Ip),
+    {ok, {ack, Ip, dhcp:tpl_to_ip(Netmask), ReplyPkg}, State}.
 
 release(_RequestPkg, State) ->
-  {ok, State}.
+    {ok, State}.
 
 -ifdef(TEST).
 
 registered_test() ->
-    {ok, #config{
-       range_start=RangeStart
-      }} = registered(#{}),
+    {ok, Config = #config{
+            range_start=RangeStart,
+            leases=Table
+           }} = registered(#{}),
     RangeStartIp=dhcp:tpl_to_ip(?IP_START),
-    ?assertEqual(RangeStart, RangeStartIp).
+    ?assertEqual(RangeStart, RangeStartIp),
+    ?assertEqual([{next_lease,RangeStart-1}], ets:lookup(Table, next_lease)),
+    DR=discover(reply,
+                #dhcp_package{chaddr=1234},
+                Config),
+    ?assertEqual(DR, ok).
 
 -endif.
