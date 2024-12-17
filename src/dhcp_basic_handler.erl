@@ -6,6 +6,9 @@
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -compile(export_all).
+-define(ETS_ACCESS, public).
+-else.
+-define(ETS_ACCESS, protected).
 -endif.
 
 -export([
@@ -45,7 +48,7 @@ registered(Config) ->
     RangeStart = dhcp:tpl_to_ip(RangeStartTpl),
     RangeEnd = dhcp:tpl_to_ip(maps:get(range_end, Config, ?IP_END)),
     Netmask = maps:get(netmask, Config, ?NETMASK),
-    Table = ets:new(?LEASE_TABLE, [set, {read_concurrency, true}, named_table]),
+    Table = ets:new(?LEASE_TABLE, [set, {read_concurrency, true}, ?ETS_ACCESS, named_table]),
     ets:insert(Table, {next_lease, RangeStart-1}),
     {ok, #config{
             lease_start=RangeStartTpl,
@@ -85,19 +88,65 @@ request(ReplyPkg,
 release(_RequestPkg, State) ->
     {ok, State}.
 
+lease_add(#dhcp_package{chaddr = Chaddr}, Ip, #state{config = #config{leases=Table}}) ->
+    ets:insert_new(Table, {Chaddr, #lease{ciaddr=Ip, chaddr=Chaddr}}).
+
 -ifdef(TEST).
 
-registered_test() ->
-    {ok, Config = #config{
-            range_start=RangeStart,
-            leases=Table
-           }} = registered(#{}),
-    RangeStartIp=dhcp:tpl_to_ip(?IP_START),
-    ?assertEqual(RangeStart, RangeStartIp),
-    ?assertEqual([{next_lease,RangeStart-1}], ets:lookup(Table, next_lease)),
-    DR=discover(reply,
-                #dhcp_package{chaddr=1234},
-                Config),
-    ?assertEqual(DR, ok).
+-define(DHCP1, "AQEGAP8iTzsAAAAACioKmgAAAAAAAAAAAAAAAORluHlawAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABjglNjNQEDOQIF3DcFAQMcBioMB3NlbnNvcnM9BwHkZbh5WsD/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").
+
+handler_test_() ->
+    {
+     setup,
+     fun () ->
+             {ok, Config} = registered(#{}),
+             #state{config=Config}
+     end,
+     fun (State) ->
+             io:fwrite(user,"~w~n", [State]),
+             Leases=(State#state.config)#config.leases,
+             % ets:update_counter(Leases, next_lease, 1),
+             [
+              fun () ->
+                      ?assertEqual(
+                         [{next_lease, dhcp:tpl_to_ip(?IP_START)-1}],
+                         ets:lookup(Leases, next_lease)
+                        )
+              end,
+              fun () ->
+                      ets:update_counter(Leases, next_lease, 1),
+                      ?assertEqual(
+                         [{next_lease, dhcp:tpl_to_ip(?IP_START)}],
+                         ets:lookup(Leases, next_lease)
+                        )
+              end,
+              fun () ->
+                      #state{
+                         config=#config{
+                                   range_start=RangeStart,
+                                   netmask=Netmask,
+                                   leases=Table
+                                  }} = State,
+                      RangeStartIp=dhcp:tpl_to_ip(?IP_START),
+                      ?assertEqual(RangeStart, RangeStartIp),
+                      ?assertEqual([{next_lease,RangeStart}], ets:lookup(Table, next_lease)),
+                      DR=discover(reply,
+                                  #dhcp_package{chaddr=1234},
+                                  State),
+                      NextIp=dhcp:ip_to_tpl(RangeStart+1),
+                      ?assertMatch({ok, {offer, NextIp, Netmask, reply}, _}, DR)
+              end,
+              fun () ->
+                      Payload=base64:decode(?DHCP1),
+                      ?assert(is_binary(Payload)),
+                      {ok,Package}=dhcp_package:decode(Payload),
+                      ?assertMatch(#dhcp_package{op=request,message_type=request}, Package),
+                      NextIp=ets:update_counter(Leases, next_lease, 1),
+                      lease_add(Package, NextIp, State),
+                      {ok,Reply,_}=request(request, Package, State),
+                      ?assertMatch({ack, NextIp, _, request}, Reply)
+              end
+             ]
+     end}.
 
 -endif.
