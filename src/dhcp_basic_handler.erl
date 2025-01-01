@@ -63,13 +63,13 @@ init(Config) ->
     {ok, #state{config=Config}}.
 
 discover(ReplyPkg,
-         #dhcp_package{chaddr = Chaddr} = _RequestPkg,
+         #dhcp_package{chaddr = Chaddr} = RequestPkg,
          #state{config = #config{leases= Table, netmask = Netmask}} = State) ->
 
     Ip = ets:update_counter(Table, next_lease, 1),
     %% Add upper boundary check
     IpTpl = dhcp:ip_to_tpl(Ip),
-    case ets:insert_new(Table, {Chaddr, #lease{ciaddr=Ip, chaddr=Chaddr}}) of
+    case lease_add(RequestPkg, Ip, State) of
         true ->
             {ok, {offer, IpTpl, Netmask, ReplyPkg}, 
              State#state{ciaddr = IpTpl, chaddr = Chaddr}};
@@ -78,18 +78,30 @@ discover(ReplyPkg,
     end.
 
 request(ReplyPkg,
-        #dhcp_package{chaddr = Chaddr} = _RequestPkg,
-        #state{config = #config{leases= Table, netmask = Netmask}} = State) ->
+        RequestPkg,
+        #state{config = #config{netmask = Netmask}} = State) ->
 
-    [{_,#lease{ciaddr=Ip}}] = ets:lookup(Table, Chaddr),
-    %IpTpl = dhcp:ip_to_tpl(Ip),
-    {ok, {ack, Ip, dhcp:tpl_to_ip(Netmask), ReplyPkg}, State}.
+    case lease_find(RequestPkg, State) of
+        {ok, Ip} ->
+            {ok, {ack, Ip, dhcp:tpl_to_ip(Netmask), ReplyPkg}, State};
+        {error, not_found} ->
+            {ok, {nck, ReplyPkg}, State}
+    end.
+
 
 release(_RequestPkg, State) ->
     {ok, State}.
 
 lease_add(#dhcp_package{chaddr = Chaddr}, Ip, #state{config = #config{leases=Table}}) ->
     ets:insert_new(Table, {Chaddr, #lease{ciaddr=Ip, chaddr=Chaddr}}).
+
+lease_find(#dhcp_package{chaddr = Chaddr}, #state{config = #config{leases=Table}}) ->
+    case ets:lookup(Table, Chaddr) of
+        [{_,#lease{ciaddr=Ip}}] ->
+            {ok, Ip};
+        [] ->
+            {error, not_found}
+    end.
 
 -ifdef(TEST).
 
