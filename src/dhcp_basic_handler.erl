@@ -64,16 +64,20 @@ init(Config) ->
 
 discover(ReplyPkg,
          #dhcp_package{chaddr = Chaddr} = RequestPkg,
-         #state{config = #config{leases= Table, netmask = Netmask}} = State) ->
+         #state{config = #config{leases= Table, netmask = Netmask, range_end = RangeEnd}} = State) ->
 
     Ip = ets:update_counter(Table, next_lease, 1),
-    %% Add upper boundary check
-    IpTpl = dhcp:ip_to_tpl(Ip),
-    case lease_add(RequestPkg, Ip, State) of
-        true ->
-            {ok, {offer, IpTpl, Netmask, ReplyPkg}, 
-             State#state{ciaddr = IpTpl, chaddr = Chaddr}};
-        false ->
+
+    if Ip < RangeEnd ->
+            IpTpl = dhcp:ip_to_tpl(Ip),
+            case lease_add(RequestPkg, Ip, State) of
+                true ->
+                    {ok, {offer, IpTpl, Netmask, ReplyPkg}, 
+                     State#state{ciaddr = IpTpl, chaddr = Chaddr}};
+                false ->
+                    {error, lease_exhaustion} % TODO this is not quite correct
+            end;
+       Ip >= RangeEnd ->
             {error, lease_exhaustion}
     end.
 

@@ -35,6 +35,7 @@
 -define(SERVER, ?MODULE).
 
 -define(S(S), (1000*S)).
+-define(BOOTPS, 68).
 
 -record(state, {xid = 0,
                 last = {0, 0, 0},
@@ -298,7 +299,7 @@ delegate(F, Pkg, Opts, State = #state{handler = M}) ->
                 true ->
                     Dst = reply_addr(R),
                     {ok, Bin} = dhcp_package:encode(R),
-                    gen_udp:send(State#state.socket, Dst, 68, Bin),
+                    gen_udp:send(State#state.socket, Dst, ?BOOTPS, Bin),
                     {ok, R, State#state{handler_state = S1,
                                         last=current_time()}};
                 false ->
